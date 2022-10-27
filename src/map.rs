@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use crate::{
     bounds::{Bounds, BoundsBuilder},
     tools::Tool,
     Error, Result,
 };
 use attohttpc::{Method, RequestBuilder, Response};
+use dashmap::DashMap;
 use rayon::prelude::*;
 use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, Transform};
 
@@ -28,6 +31,7 @@ pub struct StaticMap {
     url_template: String,
     tools: Vec<Box<dyn Tool>>,
     bounds: BoundsBuilder,
+    tile_cache: Arc<DashMap<String, Vec<u8>>>,
 }
 
 /// Builder for [StaticMap][StaticMap].
@@ -40,6 +44,7 @@ pub struct StaticMapBuilder {
     lon_center: Option<f64>,
     url_template: String,
     tile_size: u32,
+    tile_cache: Arc<DashMap<String, Vec<u8>>>,
 }
 
 impl Default for StaticMapBuilder {
@@ -53,6 +58,7 @@ impl Default for StaticMapBuilder {
             lon_center: None,
             url_template: "https://a.tile.osm.org/{z}/{x}/{y}.png".to_string(),
             tile_size: 256,
+            tile_cache: Arc::new(DashMap::new()),
         }
     }
 }
@@ -112,6 +118,12 @@ impl StaticMapBuilder {
         self
     }
 
+    /// Used to reuse the same cache over multiple maps
+    pub fn cache(mut self, cache: Arc<DashMap<String, Vec<u8>>>) -> Self {
+        self.tile_cache = cache;
+        self
+    }
+
     /// Tile size, in pixels.
     /// Default is 256.
     pub fn tile_size(mut self, tile_size: u32) -> Self {
@@ -134,6 +146,7 @@ impl StaticMapBuilder {
             url_template: self.url_template,
             tools: Vec::new(),
             bounds,
+            tile_cache: self.tile_cache,
         })
     }
 }
@@ -194,17 +207,26 @@ impl StaticMap {
                 })
             })
             .collect();
+        let cache = &self.tile_cache;
 
         let tile_images: Vec<_> = tiles
             .par_iter()
             .map(|x| {
-                RequestBuilder::try_new(Method::GET, &x.2)
-                    .and_then(RequestBuilder::send)
-                    .and_then(Response::bytes)
-                    .map_err(|error| Error::TileError {
-                        error,
-                        url: x.2.clone(),
-                    })
+                if let Some(cached) = cache.get(&x.2) {
+                    Ok(cached.clone())
+                } else {
+                    RequestBuilder::try_new(Method::GET, &x.2)
+                        .and_then(RequestBuilder::send)
+                        .and_then(Response::bytes)
+                        .map_err(|error| Error::TileError {
+                            error,
+                            url: x.2.clone(),
+                        })
+                        .map(|r| {
+                            cache.insert(x.2.clone(), r.clone());
+                            r
+                        })
+                }
             })
             .collect();
 

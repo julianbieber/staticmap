@@ -13,6 +13,7 @@ keywords = ["openstreetmap", "osm", "map"]
 
 [dependencies]
 attohttpc = { version = "0.19", default-features = false, features = ["tls-rustls"] }
+dashmap = "5.3.4"
 png = { version = "0.17", default-features = false }
 rayon = "1.5"
 tiny-skia = "0.6"
