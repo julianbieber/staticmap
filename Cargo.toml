@@ -16,4 +16,5 @@ attohttpc = { version = "0.19", default-features = false, features = ["tls-rustl
 dashmap = "5.3.4"
 png = { version = "0.17", default-features = false }
 rayon = "1.5"
+retry = "2.0.0"
 tiny-skia = "0.6"

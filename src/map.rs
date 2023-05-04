@@ -8,6 +8,7 @@ use crate::{
 use attohttpc::{Method, RequestBuilder, Response};
 use dashmap::DashMap;
 use rayon::prelude::*;
+use retry::delay::Fixed;
 use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, Transform};
 
 /// Main type.
@@ -209,23 +210,26 @@ impl StaticMap {
             .collect();
         let cache = &self.tile_cache;
 
-        let tile_images: Vec<_> = tiles
+        let tile_images: Vec<std::result::Result<Vec<u8>, Error>> = tiles
             .par_iter()
             .map(|x| {
                 if let Some(cached) = cache.get(&x.2) {
                     Ok(cached.clone())
                 } else {
-                    RequestBuilder::try_new(Method::GET, &x.2)
-                        .and_then(RequestBuilder::send)
-                        .and_then(Response::bytes)
-                        .map_err(|error| Error::TileError {
-                            error,
-                            url: x.2.clone(),
-                        })
-                        .map(|r| {
-                            cache.insert(x.2.clone(), r.clone());
-                            r
-                        })
+                    retry::retry(Fixed::from_millis(1000).take(5), || {
+                        RequestBuilder::try_new(Method::GET, &x.2)
+                            .and_then(RequestBuilder::send)
+                            .and_then(Response::bytes)
+                            .map_err(|error| Error::TileError {
+                                error,
+                                url: x.2.clone(),
+                            })
+                            .map(|r| {
+                                cache.insert(x.2.clone(), r.clone());
+                                r
+                            })
+                    })
+                    .map_err(|e| e.error)
                 }
             })
             .collect();
