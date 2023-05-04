@@ -58,6 +58,7 @@ pub mod tools;
 pub use bounds::Bounds;
 pub use error::Error;
 pub use map::{StaticMap, StaticMapBuilder};
+pub use tiny_skia;
 
 use std::f64::consts::PI;
 

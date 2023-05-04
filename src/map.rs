@@ -9,7 +9,6 @@ use attohttpc::{Method, RequestBuilder, Response};
 use dashmap::DashMap;
 use rayon::prelude::*;
 use retry::delay::Fixed;
-pub use tiny_skia;
 use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, Transform};
 
 /// Main type.
