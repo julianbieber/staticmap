@@ -9,6 +9,7 @@ use attohttpc::{Method, RequestBuilder, Response};
 use dashmap::DashMap;
 use rayon::prelude::*;
 use retry::delay::Fixed;
+pub use tiny_skia;
 use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, Transform};
 
 /// Main type.
@@ -32,7 +33,7 @@ pub struct StaticMap {
     url_template: String,
     tools: Vec<Box<dyn Tool>>,
     bounds: BoundsBuilder,
-    tile_cache: Arc<DashMap<String, Vec<u8>>>,
+    tile_cache: Arc<DashMap<String, Pixmap>>,
 }
 
 /// Builder for [StaticMap][StaticMap].
@@ -45,7 +46,7 @@ pub struct StaticMapBuilder {
     lon_center: Option<f64>,
     url_template: String,
     tile_size: u32,
-    tile_cache: Arc<DashMap<String, Vec<u8>>>,
+    tile_cache: Arc<DashMap<String, Pixmap>>,
 }
 
 impl Default for StaticMapBuilder {
@@ -120,7 +121,7 @@ impl StaticMapBuilder {
     }
 
     /// Used to reuse the same cache over multiple maps
-    pub fn cache(mut self, cache: Arc<DashMap<String, Vec<u8>>>) -> Self {
+    pub fn cache(mut self, cache: Arc<DashMap<String, Pixmap>>) -> Self {
         self.tile_cache = cache;
         self
     }
@@ -210,7 +211,7 @@ impl StaticMap {
             .collect();
         let cache = &self.tile_cache;
 
-        let tile_images: Vec<std::result::Result<Vec<u8>, Error>> = tiles
+        let tile_images: Vec<std::result::Result<Pixmap, Error>> = tiles
             .par_iter()
             .map(|x| {
                 if let Some(cached) = cache.get(&x.2) {
@@ -224,6 +225,9 @@ impl StaticMap {
                                 error,
                                 url: x.2.clone(),
                             })
+                            .and_then(|bytes| {
+                                Pixmap::decode_png(&bytes).map_err(|e| Error::PngDecodingError(e))
+                            })
                             .map(|r| {
                                 cache.insert(x.2.clone(), r.clone());
                                 r
@@ -234,16 +238,14 @@ impl StaticMap {
             })
             .collect();
 
-        for (tile, tile_image) in tiles.iter().zip(tile_images) {
+        for (tile, pixmap) in tiles.iter().zip(tile_images) {
             let (x, y) = (tile.0, tile.1);
             let (x_px, y_px) = (bounds.x_to_px(x.into()), bounds.y_to_px(y.into()));
-
-            let pixmap = Pixmap::decode_png(&tile_image?)?;
 
             image.draw_pixmap(
                 x_px as i32,
                 y_px as i32,
-                pixmap.as_ref(),
+                pixmap?.as_ref(),
                 &PixmapPaint::default(),
                 Transform::default(),
                 None,
