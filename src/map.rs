@@ -7,7 +7,7 @@ use crate::{
 };
 use attohttpc::{Method, RequestBuilder, Response};
 use dashmap::DashMap;
-use rayon::prelude::*;
+use rayon::{prelude::*, ThreadPoolBuilder};
 use retry::delay::Fixed;
 use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, Transform};
 
@@ -210,32 +210,36 @@ impl StaticMap {
             .collect();
         let cache = &self.tile_cache;
 
-        let tile_images: Vec<std::result::Result<Pixmap, Error>> = tiles
-            .par_iter()
-            .map(|x| {
-                if let Some(cached) = cache.get(&x.2) {
-                    Ok(cached.clone())
-                } else {
-                    retry::retry(Fixed::from_millis(1000).take(5), || {
-                        RequestBuilder::try_new(Method::GET, &x.2)
-                            .and_then(RequestBuilder::send)
-                            .and_then(Response::bytes)
-                            .map_err(|error| Error::TileError {
-                                error,
-                                url: x.2.clone(),
-                            })
-                            .and_then(|bytes| {
-                                Pixmap::decode_png(&bytes).map_err(|e| Error::PngDecodingError(e))
-                            })
-                            .map(|r| {
-                                cache.insert(x.2.clone(), r.clone());
-                                r
-                            })
-                    })
-                    .map_err(|e| e.error)
-                }
-            })
-            .collect();
+        let thread_pool = ThreadPoolBuilder::new().num_threads(24).build().unwrap();
+        let tile_images: Vec<std::result::Result<Pixmap, Error>> = thread_pool.install(|| {
+            tiles
+                .par_iter()
+                .map(|x| {
+                    if let Some(cached) = cache.get(&x.2) {
+                        Ok(cached.clone())
+                    } else {
+                        retry::retry(Fixed::from_millis(1000).take(5), || {
+                            RequestBuilder::try_new(Method::GET, &x.2)
+                                .and_then(RequestBuilder::send)
+                                .and_then(Response::bytes)
+                                .map_err(|error| Error::TileError {
+                                    error,
+                                    url: x.2.clone(),
+                                })
+                                .and_then(|bytes| {
+                                    Pixmap::decode_png(&bytes)
+                                        .map_err(|e| Error::PngDecodingError(e))
+                                })
+                                .map(|r| {
+                                    cache.insert(x.2.clone(), r.clone());
+                                    r
+                                })
+                        })
+                        .map_err(|e| e.error)
+                    }
+                })
+                .collect()
+        });
 
         for (tile, pixmap) in tiles.iter().zip(tile_images) {
             let (x, y) = (tile.0, tile.1);
